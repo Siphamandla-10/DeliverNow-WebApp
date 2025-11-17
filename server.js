@@ -41,13 +41,15 @@ if (cloudinary && process.env.CLOUDINARY_CLOUD_NAME) {
   console.log('✅ Cloudinary configured');
 }
 
-// ✅ CORS Configuration - MUST BE BEFORE ROUTES
-const allowedOrigins = [
-  'http://localhost:3000',
-  'https://front-end-lake-one.vercel.app',
-  'https://front-end-git-main-siphamandla-10s-projects.vercel.app',
-  'https://front-a507jnlb9-siphamandla-10s-projects.vercel.app'
-];
+// ✅ CORS Configuration - NOW READS FROM ENVIRONMENT VARIABLE
+// Read from environment variable or use defaults
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+  : [
+      'http://localhost:3000',
+      'https://front-end-lake-one.vercel.app',
+      'https://delivernow-admin-dashboard.onrender.com'
+    ];
 
 app.use(cors({
   origin: function(origin, callback) {
@@ -56,6 +58,11 @@ app.use(cors({
     
     // ✅ Allow all Vercel deployment URLs (*.vercel.app)
     if (origin && origin.match(/^https:\/\/.*\.vercel\.app$/)) {
+      return callback(null, true);
+    }
+    
+    // ✅ Allow all Render deployment URLs (*.onrender.com)
+    if (origin && origin.match(/^https:\/\/.*\.onrender\.com$/)) {
       return callback(null, true);
     }
     
@@ -74,13 +81,13 @@ app.use(cors({
 }));
 
 console.log('✅ CORS configured for origins:', allowedOrigins);
-console.log('✅ CORS also allows: All *.vercel.app domains');
+console.log('✅ CORS also allows: All *.vercel.app and *.onrender.com domains');
 
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging - ✅ FIXED: Use parentheses, not backticks
+// Request logging
 app.use((req, res, next) => {
   console.log('📥 ' + req.method + ' ' + req.path);
   next();
@@ -135,12 +142,13 @@ app.get('/', (req, res) => {
     },
     cors: {
       allowedOrigins: allowedOrigins,
-      allowsAllVercelDomains: true
+      allowsAllVercelDomains: true,
+      allowsAllRenderDomains: true
     }
   });
 });
 
-// 404 handler - ✅ FIXED: Use parentheses, not backticks
+// 404 handler
 app.use((req, res) => {
   console.log('❌ 404 - Route not found: ' + req.method + ' ' + req.path);
   res.status(404).json({ 
