@@ -27,7 +27,7 @@ const ordersRoutes = require('./routes/orders');
 const driverRoutes = require('./routes/drivers');
 const customersRoutes = require('./routes/customers');
 const restaurantRoutes = require('./routes/restaurants');
-const menuRoutes = require('./routes/menu'); // ✅ ADD THIS
+const menuRoutes = require('./routes/menu');
 
 const app = express();
 
@@ -41,14 +41,39 @@ if (cloudinary && process.env.CLOUDINARY_CLOUD_NAME) {
   console.log('✅ Cloudinary configured');
 }
 
+// ✅ CORS Configuration - MUST BE BEFORE ROUTES
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://front-end-lake-one.vercel.app',
+  'https://front-end-git-main-siphamandla-10s-projects.vercel.app',
+  'https://front-a507jnlb9-siphamandla-10s-projects.vercel.app'
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
+console.log('✅ CORS configured for origins:', allowedOrigins);
+
 // Middleware
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Request logging
+// Request logging - ✅ FIXED: Use parentheses, not backticks
 app.use((req, res, next) => {
-  console.log(`📥 ${req.method} ${req.path}`); // ✅ FIXED - use parentheses not backticks
+  console.log('📥 ' + req.method + ' ' + req.path);
   next();
 });
 
@@ -72,7 +97,7 @@ app.use('/api/orders', ordersRoutes);
 app.use('/api/drivers', driverRoutes);
 app.use('/api/customers', customersRoutes);
 app.use('/api/restaurants', restaurantRoutes);
-app.use('/api/menu', menuRoutes); // ✅ ADD THIS
+app.use('/api/menu', menuRoutes);
 
 console.log('✅ Routes registered:');
 console.log('   - /api/auth');
@@ -81,13 +106,15 @@ console.log('   - /api/orders');
 console.log('   - /api/drivers');
 console.log('   - /api/customers');
 console.log('   - /api/restaurants');
-console.log('   - /api/menu'); // ✅ ADD THIS
+console.log('   - /api/menu');
 
 // Health check
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Backend API is running',
+    success: true,
+    message: 'DeliverNow Backend API is running',
     environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
       dashboard: '/api/dashboard',
@@ -95,17 +122,20 @@ app.get('/', (req, res) => {
       drivers: '/api/drivers',
       customers: '/api/customers',
       restaurants: '/api/restaurants',
-      menu: '/api/menu' // ✅ ADD THIS
+      menu: '/api/menu'
+    },
+    cors: {
+      allowedOrigins: allowedOrigins
     }
   });
 });
 
-// 404 handler
+// 404 handler - ✅ FIXED: Use parentheses, not backticks
 app.use((req, res) => {
-  console.log(`❌ 404 - Route not found: ${req.method} ${req.path}`); // ✅ FIXED
+  console.log('❌ 404 - Route not found: ' + req.method + ' ' + req.path);
   res.status(404).json({ 
     success: false, 
-    message: `Cannot ${req.method} ${req.path}`
+    message: 'Cannot ' + req.method + ' ' + req.path
   });
 });
 
@@ -120,10 +150,11 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
-  console.log(`\n🚀 Server running on port ${PORT}`); // ✅ FIXED
-  console.log(`📍 API: http://localhost:5000`); // ✅ FIXED
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}\n`); // ✅ FIXED
+  console.log('\n🚀 Server running on port ' + PORT);
+  console.log('📍 API: http://localhost:' + PORT);
+  console.log('🌍 Environment: ' + (process.env.NODE_ENV || 'development') + '\n');
 });
 
 module.exports = app;
