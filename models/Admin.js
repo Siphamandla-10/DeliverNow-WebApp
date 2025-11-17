@@ -31,6 +31,11 @@ const adminSchema = new mongoose.Schema({
     required: [true, 'Password is required'],
     minlength: [6, 'Password must be at least 6 characters long']
   },
+  role: {
+    type: String,
+    default: 'admin',
+    enum: ['admin', 'super_admin']
+  },
   createdAt: {
     type: Date,
     default: Date.now
@@ -69,4 +74,5 @@ adminSchema.methods.toJSON = function() {
 };
 
 const Admin = mongoose.model('Admin', adminSchema);
+
 module.exports = Admin;
