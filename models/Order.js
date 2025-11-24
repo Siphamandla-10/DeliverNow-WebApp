@@ -4,31 +4,27 @@ const orderSchema = new mongoose.Schema({
   orderNumber: {
     type: String,
     required: true,
-    unique: true
+    unique: true,
+    index: true
   },
-  
-  // Customer reference (User with userType: 'customer')
-  customer: {
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    index: true
   },
-  
-  // Driver reference (User with userType: 'driver')
-  driver: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: null
-  },
-  
-  // Restaurant reference
   restaurant: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Restaurant',
-    required: true
+    required: true,
+    index: true
   },
-  
-  // Order items
+  driver: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+    index: true
+  },
   items: [{
     menuItem: {
       type: mongoose.Schema.Types.ObjectId,
@@ -38,26 +34,54 @@ const orderSchema = new mongoose.Schema({
       type: String,
       required: true
     },
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1
-    },
+    description: String,
     price: {
       type: Number,
       required: true
     },
-    subtotal: {
+    quantity: {
       type: Number,
-      required: false
+      required: true,
+      default: 1
     },
+    subtotal: Number,
+    image: mongoose.Schema.Types.Mixed,
+    images: [mongoose.Schema.Types.Mixed],
+    category: String,
     specialInstructions: String
   }],
-  
-  // Pricing
+  deliveryAddress: {
+    street: String,
+    city: String,
+    state: String,
+    zipCode: String,
+    country: String,
+    latitude: Number,
+    longitude: Number
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'confirmed', 'assigned', 'picked_up', 'in_transit', 'delivered', 'cancelled'],
+    default: 'pending',
+    index: true
+  },
+  deliveryStatus: {
+    type: String,
+    enum: ['pending', 'confirmed', 'assigned', 'picked_up', 'in_transit', 'delivered', 'cancelled'],
+    default: 'pending'
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['cash', 'card', 'online'],
+    default: 'cash'
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'failed', 'refunded'],
+    default: 'pending'
+  },
   subtotal: {
     type: Number,
-    required: false,
     default: 0
   },
   deliveryFee: {
@@ -72,104 +96,24 @@ const orderSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
-  
-  // Pickup location (restaurant address)
-  pickupAddress: {
-    street: String,
-    city: String,
-    state: String,
-    zipCode: String,
-    country: {
-      type: String,
-      default: 'South Africa'
-    },
-    latitude: Number,
-    longitude: Number
+  pricing: {
+    subtotal: Number,
+    deliveryFee: Number,
+    tax: Number,
+    total: Number
   },
-  
-  // Delivery location (customer address)
-  deliveryAddress: {
-    street: String,
-    city: String,
-    state: String,
-    zipCode: String,
-    country: {
-      type: String,
-      default: 'South Africa'
-    },
-    latitude: Number,
-    longitude: Number
-  },
-  
-  // Order status
-  status: {
-    type: String,
-    enum: ['pending', 'confirmed', 'picked_up', 'in_transit', 'delivered', 'cancelled'],
-    default: 'pending'
-  },
-  
-  // Payment information
-  paymentStatus: {
-    type: String,
-    enum: ['pending', 'paid', 'failed', 'refunded'],
-    default: 'pending'
-  },
-  paymentMethod: {
-    type: String,
-    enum: ['cash', 'card', 'online'],
-    default: 'cash'
-  },
-  paymentIntentId: String, // For Stripe or other payment gateways
-  
-  // Timing
-  scheduledPickupTime: Date,
-  scheduledDeliveryTime: Date,
-  actualPickupTime: Date,
-  actualDeliveryTime: Date,
+  statusHistory: [{
+    status: String,
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  }],
   estimatedDeliveryTime: Date,
-  
-  // Additional information
-  specialInstructions: String,
-  cancellationReason: String,
-  
-  // Reviews and ratings
-  rating: {
-    type: Number,
-    min: 0,
-    max: 5
-  },
-  review: String,
-  reviewedAt: Date,
-  
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  }
+  actualDeliveryTime: Date,
+  notes: String
+}, {
+  timestamps: true
 });
 
-// Generate order number before saving
-orderSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  
-  // Generate order number if not exists
-  if (!this.orderNumber) {
-    const timestamp = Date.now().toString(36).toUpperCase();
-    const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-    this.orderNumber = `ORD-${timestamp}-${random}`;
-  }
-  
-  next();
-});
-
-// Index for faster queries (orderNumber already unique, don't duplicate)
-orderSchema.index({ customer: 1 });
-orderSchema.index({ driver: 1 });
-orderSchema.index({ restaurant: 1 });
-orderSchema.index({ status: 1 });
-orderSchema.index({ createdAt: -1 });
-
-module.exports = mongoose.model('Order', orderSchema);
+module.exports = mongoose.models.Order || mongoose.model('Order', orderSchema);

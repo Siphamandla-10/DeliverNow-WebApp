@@ -229,6 +229,11 @@ userSchema.pre('save', function(next) {
 });
 
 // Indexes
+userSchema.index({ email: 1 });
+userSchema.index({ phone: 1 });
 userSchema.index({ userType: 1 });
 
-module.exports = mongoose.model('User', userSchema);
+// ========================================
+// EXPORT MODEL (PREVENT DUPLICATE COMPILATION)
+// ========================================
+module.exports = mongoose.models.User || mongoose.model('User', userSchema);

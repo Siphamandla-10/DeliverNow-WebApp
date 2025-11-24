@@ -1,133 +1,142 @@
 ﻿const express = require('express');
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
 const Order = require('../models/Order');
-const Delivery = require('../models/Delivery');
-const Restaurant = require('../models/Restaurant');
-const MenuItem = require('../models/MenuItem'); // ✅ ADD THIS IMPORT!
+const User = require('../models/User');
 
-// @route   GET /api/orders
-// @desc    Get all orders with proper relationships
-// @access  Private
+// Try to load the correct auth middleware
+let authMiddleware;
+try {
+  authMiddleware = require('../middleware/authMiddleware');
+  console.log('✅ Using authMiddleware.js');
+} catch (e) {
+  try {
+    authMiddleware = require('../middleware/auth');
+    console.log('✅ Using auth.js');
+  } catch (e2) {
+    console.error('❌ Could not find auth middleware!');
+    authMiddleware = (req, res, next) => next();
+  }
+}
+
+// GET /api/orders - Get all orders with populated data
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const { status } = req.query;
+    console.log('\n========================================');
+    console.log('📋 GET /api/orders ROUTE CALLED');
+    console.log('Time:', new Date().toISOString());
+    console.log('========================================\n');
     
-    // Build query
-    let query = {};
-    if (status && status !== 'all') {
-      query.status = status;
-    }
-
-    // Fetch orders with all proper relationships INCLUDING menu items
-    const orders = await Order.find(query)
-      .populate('customer', 'name email phone addresses currentAddress')
-      .populate('driver', 'name email phone')
-      .populate('restaurant', 'name cuisine image address')
+    console.log('🔍 Fetching orders from database...');
+    
+    let orders = await Order.find()
+      .populate({
+        path: 'user',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'driver',
+        select: 'name email phone vehicleType vehicleNumber',
+        model: 'User'
+      })
+      .populate({
+        path: 'restaurant',
+        select: 'name cuisine image address'
+      })
       .populate({
         path: 'items.menuItem',
-        model: 'MenuItem', // Explicitly specify the model
-        select: 'name description price image images category isAvailable'
+        select: 'name description image category'
       })
       .sort({ createdAt: -1 })
       .lean();
 
-    // Get delivery information for each order
-    const ordersWithDelivery = await Promise.all(
-      orders.map(async (order) => {
-        // Find the delivery for this order
-        const delivery = await Delivery.findOne({ order: order._id })
-          .select('status startTime endTime distance duration notes')
-          .lean();
-
-        // Get customer's delivery address
-        let deliveryAddress = order.deliveryAddress;
-        
-        if (!deliveryAddress && order.customer?.currentAddress) {
-          deliveryAddress = order.customer.currentAddress;
+    console.log(`✅ Found ${orders.length} orders from database\n`);
+    
+    // Check first order BEFORE manual population
+    if (orders.length > 0) {
+      console.log('📦 FIRST ORDER (BEFORE MANUAL POPULATION):');
+      console.log('Order Number:', orders[0].orderNumber);
+      console.log('User field type:', typeof orders[0].user);
+      console.log('User field value:', orders[0].user);
+      console.log('User is string?:', typeof orders[0].user === 'string');
+      console.log('User is object?:', typeof orders[0].user === 'object' && orders[0].user !== null);
+      if (typeof orders[0].user === 'object' && orders[0].user !== null) {
+        console.log('User name:', orders[0].user.name);
+        console.log('User email:', orders[0].user.email);
+      }
+      console.log('Driver:', orders[0].driver);
+      console.log('Restaurant:', orders[0].restaurant);
+      console.log('');
+    }
+    
+    // Manual population fallback for user field if it's still an ID
+    console.log('🔧 Checking if manual population needed...');
+    let manuallyPopulated = 0;
+    
+    for (let order of orders) {
+      if (order.user && typeof order.user === 'string') {
+        console.log(`⚠️ Order ${order.orderNumber}: User not populated, ID is ${order.user}`);
+        const user = await User.findById(order.user).select('name email phone').lean();
+        if (user) {
+          order.user = user;
+          manuallyPopulated++;
+          console.log(`✅ Manually populated user: ${user.name}`);
+        } else {
+          console.log(`❌ User not found in database for ID: ${order.user}`);
         }
-        
-        if (!deliveryAddress && order.customer?.addresses && order.customer.addresses.length > 0) {
-          deliveryAddress = order.customer.addresses[0];
-        }
+      }
+    }
+    
+    console.log(`\n📊 Manually populated ${manuallyPopulated} users\n`);
+    
+    // Check first order AFTER manual population
+    if (orders.length > 0) {
+      console.log('📦 FIRST ORDER (AFTER MANUAL POPULATION):');
+      console.log('User field type:', typeof orders[0].user);
+      console.log('User field value:', JSON.stringify(orders[0].user, null, 2));
+      console.log('');
+    }
+    
+    console.log('📤 Sending response to frontend...\n');
+    console.log('========================================\n');
 
-        // Process items - use menuItem data if available, otherwise use stored data
-        const processedItems = order.items.map(item => {
-          // If menuItem was populated and exists
-          if (item.menuItem && typeof item.menuItem === 'object' && item.menuItem.name) {
-            return {
-              _id: item._id,
-              menuItemId: item.menuItem._id,
-              name: item.menuItem.name,
-              description: item.menuItem.description,
-              category: item.menuItem.category,
-              price: item.price, // Use order price (may differ due to promotions)
-              quantity: item.quantity,
-              subtotal: item.subtotal || (item.price * item.quantity),
-              image: item.menuItem.image,
-              images: item.menuItem.images,
-              isAvailable: item.menuItem.isAvailable,
-              specialInstructions: item.specialInstructions
-            };
-          } 
-          // Otherwise use the denormalized data stored in the order
-          else {
-            return {
-              _id: item._id,
-              menuItemId: item.menuItem, // Might be an ID or null
-              name: item.name,
-              description: item.description || null,
-              category: item.category || null,
-              price: item.price,
-              quantity: item.quantity,
-              subtotal: item.subtotal || (item.price * item.quantity),
-              image: item.image || null,
-              images: item.images || null,
-              specialInstructions: item.specialInstructions
-            };
-          }
-        });
-
-        return {
-          ...order,
-          items: processedItems,
-          delivery: delivery || null,
-          deliveryStatus: delivery?.status || order.status,
-          deliveryAddress: deliveryAddress || order.deliveryAddress
-        };
-      })
-    );
-
-    console.log(`Found ${ordersWithDelivery.length} orders with delivery info`);
-
-    res.status(200).json({
+    res.json({
       success: true,
-      count: ordersWithDelivery.length,
-      data: ordersWithDelivery
+      data: orders,
+      count: orders.length
     });
+
   } catch (error) {
-    console.error('Error fetching orders:', error);
+    console.error('❌ Error fetching orders:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching orders',
+      message: 'Failed to fetch orders',
       error: error.message
     });
   }
 });
 
-// @route   GET /api/orders/:id
-// @desc    Get single order by ID with full details
-// @access  Private
+// GET /api/orders/:id - Get single order
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const order = await Order.findById(req.params.id)
-      .populate('customer', 'name email phone addresses currentAddress')
-      .populate('driver', 'name email phone location')
-      .populate('restaurant', 'name cuisine image address contact')
+      .populate({
+        path: 'user',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'driver',
+        select: 'name email phone vehicleType vehicleNumber',
+        model: 'User'
+      })
+      .populate({
+        path: 'restaurant',
+        select: 'name cuisine image address'
+      })
       .populate({
         path: 'items.menuItem',
-        model: 'MenuItem',
-        select: 'name description price image images category isAvailable'
+        select: 'name description image category'
       })
       .lean();
 
@@ -138,105 +147,155 @@ router.get('/:id', authMiddleware, async (req, res) => {
       });
     }
 
-    // Get delivery information
-    const delivery = await Delivery.findOne({ order: order._id })
-      .select('status startTime endTime distance duration notes')
-      .lean();
-
-    // Get customer's delivery address
-    let deliveryAddress = order.deliveryAddress;
-    if (!deliveryAddress && order.customer?.currentAddress) {
-      deliveryAddress = order.customer.currentAddress;
-    }
-    if (!deliveryAddress && order.customer?.addresses && order.customer.addresses.length > 0) {
-      deliveryAddress = order.customer.addresses[0];
-    }
-
-    // Process items
-    const processedItems = order.items.map(item => {
-      if (item.menuItem && typeof item.menuItem === 'object' && item.menuItem.name) {
-        return {
-          _id: item._id,
-          menuItemId: item.menuItem._id,
-          name: item.menuItem.name,
-          description: item.menuItem.description,
-          category: item.menuItem.category,
-          price: item.price,
-          quantity: item.quantity,
-          subtotal: item.subtotal || (item.price * item.quantity),
-          image: item.menuItem.image,
-          images: item.menuItem.images,
-          isAvailable: item.menuItem.isAvailable,
-          specialInstructions: item.specialInstructions
-        };
-      } else {
-        return {
-          _id: item._id,
-          menuItemId: item.menuItem,
-          name: item.name,
-          description: item.description || null,
-          category: item.category || null,
-          price: item.price,
-          quantity: item.quantity,
-          subtotal: item.subtotal || (item.price * item.quantity),
-          image: item.image || null,
-          images: item.images || null,
-          specialInstructions: item.specialInstructions
-        };
+    // Manual population for user if needed
+    if (order.user && typeof order.user === 'string') {
+      const user = await User.findById(order.user).select('name email phone').lean();
+      if (user) {
+        order.user = user;
       }
-    });
+    }
 
-    const orderWithDelivery = {
-      ...order,
-      items: processedItems,
-      delivery: delivery || null,
-      deliveryStatus: delivery?.status || order.status,
-      deliveryAddress: deliveryAddress || order.deliveryAddress
-    };
-
-    res.status(200).json({
+    res.json({
       success: true,
-      data: orderWithDelivery
+      data: order
     });
+
   } catch (error) {
-    console.error('Error fetching order:', error);
+    console.error('❌ Error fetching order:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching order',
+      message: 'Failed to fetch order',
       error: error.message
     });
   }
 });
 
-// @route   PUT /api/orders/:id/status
-// @desc    Update order status and delivery status
-// @access  Private
-router.put('/:id/status', authMiddleware, async (req, res) => {
+// POST /api/orders - Create new order
+router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { status } = req.body;
-    
-    const validStatuses = ['pending', 'confirmed', 'picked_up', 'in_transit', 'delivered', 'cancelled'];
-    if (!validStatuses.includes(status)) {
+    console.log('📝 Creating new order...');
+    console.log('Request body:', req.body);
+
+    const {
+      user,
+      restaurant,
+      items,
+      deliveryAddress,
+      deliveryFee,
+      subtotal,
+      tax,
+      totalAmount,
+      paymentMethod
+    } = req.body;
+
+    // Validation
+    if (!user || !restaurant || !items || items.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid status'
+        message: 'User, restaurant, and items are required'
       });
     }
 
-    // Update order status
+    // Verify user exists
+    const userExists = await User.findById(user);
+    if (!userExists) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Generate order number
+    const orderCount = await Order.countDocuments();
+    const orderNumber = `ORD-${Date.now()}-${orderCount + 1}`;
+
+    const order = new Order({
+      orderNumber,
+      user,
+      restaurant,
+      items,
+      deliveryAddress,
+      deliveryFee: deliveryFee || 0,
+      subtotal: subtotal || 0,
+      tax: tax || 0,
+      totalAmount: totalAmount || 0,
+      paymentMethod: paymentMethod || 'cash',
+      status: 'pending',
+      deliveryStatus: 'pending'
+    });
+
+    await order.save();
+
+    // Populate before sending response
+    await order.populate([
+      { path: 'user', select: 'name email phone', model: 'User' },
+      { path: 'restaurant', select: 'name cuisine image address' },
+      { path: 'items.menuItem', select: 'name description image category' }
+    ]);
+
+    console.log('✅ Order created:', order.orderNumber);
+    console.log('   User:', order.user?.name);
+    console.log('   Restaurant:', order.restaurant?.name);
+
+    res.status(201).json({
+      success: true,
+      message: 'Order created successfully',
+      data: order
+    });
+
+  } catch (error) {
+    console.error('❌ Error creating order:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create order',
+      error: error.message
+    });
+  }
+});
+
+// PUT /api/orders/:id/status - Update order status
+router.put('/:id/status', authMiddleware, async (req, res) => {
+  try {
+    console.log(`🔄 Updating order status: ${req.params.id}`);
+    
+    const { status } = req.body;
+
+    if (!status) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status is required'
+      });
+    }
+
+    // Valid statuses
+    const validStatuses = ['pending', 'confirmed', 'assigned', 'picked_up', 'in_transit', 'delivered', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid status. Must be one of: ${validStatuses.join(', ')}`
+      });
+    }
+
     const order = await Order.findByIdAndUpdate(
       req.params.id,
-      { status, updatedAt: Date.now() },
-      { new: true }
-    )
-      .populate('customer', 'name email phone')
-      .populate('driver', 'name email phone')
-      .populate('restaurant', 'name cuisine')
-      .populate({
-        path: 'items.menuItem',
-        model: 'MenuItem',
-        select: 'name description price image images'
-      });
+      { 
+        $set: {
+          status,
+          deliveryStatus: status,
+          updatedAt: new Date()
+        },
+        $push: {
+          statusHistory: {
+            status,
+            timestamp: new Date()
+          }
+        }
+      },
+      { 
+        new: true,
+        runValidators: false
+      }
+    );
 
     if (!order) {
       return res.status(404).json({
@@ -245,35 +304,303 @@ router.put('/:id/status', authMiddleware, async (req, res) => {
       });
     }
 
-    // Update delivery status if exists
-    const delivery = await Delivery.findOne({ order: req.params.id });
-    if (delivery) {
-      let deliveryStatus = 'assigned';
-      
-      if (status === 'delivered') {
-        deliveryStatus = 'completed';
-        delivery.endTime = new Date();
-      } else if (['picked_up', 'in_transit'].includes(status)) {
-        deliveryStatus = 'ongoing';
-        if (!delivery.startTime) {
-          delivery.startTime = new Date();
-        }
+    // Populate before sending response
+    await order.populate([
+      { path: 'user', select: 'name email phone', model: 'User' },
+      { path: 'driver', select: 'name email phone vehicleType vehicleNumber', model: 'User' },
+      { path: 'restaurant', select: 'name cuisine' },
+      { path: 'items.menuItem', select: 'name description image category' }
+    ]);
+
+    // Manual population for user if needed
+    if (order.user && typeof order.user === 'string') {
+      const user = await User.findById(order.user).select('name email phone').lean();
+      if (user) {
+        order.user = user;
       }
-      
-      delivery.status = deliveryStatus;
-      await delivery.save();
     }
 
-    res.status(200).json({
+    console.log(`✅ Order status updated to: ${status}`);
+
+    res.json({
       success: true,
       message: 'Order status updated successfully',
       data: order
     });
+
   } catch (error) {
-    console.error('Error updating order:', error);
+    console.error('❌ Error updating order status:', error);
     res.status(500).json({
       success: false,
-      message: 'Error updating order',
+      message: 'Failed to update order status',
+      error: error.message
+    });
+  }
+});
+
+// PUT /api/orders/:id/assign-driver - Assign driver to order
+router.put('/:id/assign-driver', authMiddleware, async (req, res) => {
+  try {
+    const { driverId } = req.body;
+
+    if (!driverId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Driver ID is required'
+      });
+    }
+
+    // Verify driver exists and is actually a driver
+    const driver = await User.findById(driverId);
+    if (!driver) {
+      return res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+
+    if (driver.userType !== 'driver') {
+      return res.status(400).json({
+        success: false,
+        message: 'User is not a driver'
+      });
+    }
+
+    const order = await Order.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          driver: driverId,
+          status: 'assigned',
+          deliveryStatus: 'assigned',
+          updatedAt: new Date()
+        }
+      },
+      {
+        new: true,
+        runValidators: false
+      }
+    );
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    await order.populate([
+      { path: 'user', select: 'name email phone', model: 'User' },
+      { path: 'driver', select: 'name email phone vehicleType', model: 'User' },
+      { path: 'restaurant', select: 'name cuisine' },
+      { path: 'items.menuItem', select: 'name description image category' }
+    ]);
+
+    // Manual population for user if needed
+    if (order.user && typeof order.user === 'string') {
+      const user = await User.findById(order.user).select('name email phone').lean();
+      if (user) {
+        order.user = user;
+      }
+    }
+
+    console.log(`✅ Driver assigned to order ${order.orderNumber}`);
+
+    res.json({
+      success: true,
+      message: 'Driver assigned successfully',
+      data: order
+    });
+
+  } catch (error) {
+    console.error('❌ Error assigning driver:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to assign driver',
+      error: error.message
+    });
+  }
+});
+
+// DELETE /api/orders/:id - Delete order
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+
+    if (!order) {
+      return res.status(404).json({
+        success: false,
+        message: 'Order not found'
+      });
+    }
+
+    await Order.findByIdAndDelete(req.params.id);
+
+    console.log('✅ Order deleted:', order.orderNumber);
+
+    res.json({
+      success: true,
+      message: 'Order deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('❌ Error deleting order:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete order',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/orders/customer/:customerId - Get orders by customer
+router.get('/customer/:customerId', authMiddleware, async (req, res) => {
+  try {
+    let orders = await Order.find({ user: req.params.customerId })
+      .populate({
+        path: 'user',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'driver',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'restaurant',
+        select: 'name cuisine image'
+      })
+      .populate({
+        path: 'items.menuItem',
+        select: 'name description image category'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Manual population for user if needed
+    for (let order of orders) {
+      if (order.user && typeof order.user === 'string') {
+        const user = await User.findById(order.user).select('name email phone').lean();
+        if (user) {
+          order.user = user;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: orders,
+      count: orders.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching customer orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch customer orders',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/orders/driver/:driverId - Get orders by driver
+router.get('/driver/:driverId', authMiddleware, async (req, res) => {
+  try {
+    let orders = await Order.find({ driver: req.params.driverId })
+      .populate({
+        path: 'user',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'driver',
+        select: 'name email phone vehicleType',
+        model: 'User'
+      })
+      .populate({
+        path: 'restaurant',
+        select: 'name cuisine image'
+      })
+      .populate({
+        path: 'items.menuItem',
+        select: 'name description image category'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Manual population for user if needed
+    for (let order of orders) {
+      if (order.user && typeof order.user === 'string') {
+        const user = await User.findById(order.user).select('name email phone').lean();
+        if (user) {
+          order.user = user;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: orders,
+      count: orders.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching driver orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch driver orders',
+      error: error.message
+    });
+  }
+});
+
+// GET /api/orders/restaurant/:restaurantId - Get orders by restaurant
+router.get('/restaurant/:restaurantId', authMiddleware, async (req, res) => {
+  try {
+    let orders = await Order.find({ restaurant: req.params.restaurantId })
+      .populate({
+        path: 'user',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'driver',
+        select: 'name email phone',
+        model: 'User'
+      })
+      .populate({
+        path: 'restaurant',
+        select: 'name cuisine image'
+      })
+      .populate({
+        path: 'items.menuItem',
+        select: 'name description image category'
+      })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Manual population for user if needed
+    for (let order of orders) {
+      if (order.user && typeof order.user === 'string') {
+        const user = await User.findById(order.user).select('name email phone').lean();
+        if (user) {
+          order.user = user;
+        }
+      }
+    }
+
+    res.json({
+      success: true,
+      data: orders,
+      count: orders.length
+    });
+
+  } catch (error) {
+    console.error('❌ Error fetching restaurant orders:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch restaurant orders',
       error: error.message
     });
   }
