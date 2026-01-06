@@ -2,12 +2,15 @@ const express = require('express');
 const router = express.Router();
 const Restaurant = require('../models/Restaurant');
 const User = require('../models/User');
-const authMiddleware = require('../middleware/auth');
+const { 
+  authMiddleware,
+  optionalAuth
+} = require('../middleware/auth');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const { Readable } = require('stream');
 
-// Configure multer for memory storage
+// Configure multer
 const storage = multer.memoryStorage();
 const upload = multer({ 
   storage: storage,
@@ -23,17 +26,26 @@ const upload = multer({
   }
 });
 
-// Helper function to upload to Cloudinary
+// Helper functions
 const uploadToCloudinary = (buffer) => {
   return new Promise((resolve, reject) => {
     const uploadStream = cloudinary.uploader.upload_stream(
       {
         folder: 'restaurants',
-        transformation: [{ width: 800, height: 600, crop: 'fill' }]
+        transformation: [{ width: 800, height: 600, crop: 'fill' }],
+        invalidate: true,
+        overwrite: true,
+        resource_type: 'auto',
+        public_id: `restaurants/restaurant_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       },
       (error, result) => {
-        if (error) reject(error);
-        else resolve(result);
+        if (error) {
+          console.error('❌ Cloudinary upload error:', error);
+          reject(error);
+        } else {
+          console.log('✅ Cloudinary upload successful:', result.secure_url);
+          resolve(result);
+        }
       }
     );
     const readableStream = Readable.from(buffer);
@@ -41,12 +53,107 @@ const uploadToCloudinary = (buffer) => {
   });
 };
 
-// GET /api/restaurants - Get all restaurants with pagination and filters
-router.get('/', authMiddleware, async (req, res) => {
+const deleteFromCloudinary = async (imageUrl) => {
+  if (!imageUrl) return;
+  
   try {
-    const { page = 1, limit = 10, search, status, isActive } = req.query;
+    const urlParts = imageUrl.split('/');
+    const filename = urlParts[urlParts.length - 1].split('.')[0];
+    const folder = urlParts[urlParts.length - 2];
+    const publicId = `${folder}/${filename}`;
     
-    console.log('📋 Fetching all restaurants...');
+    console.log('🗑️ Deleting from Cloudinary:', publicId);
+    const result = await cloudinary.uploader.destroy(publicId, { invalidate: true });
+    console.log('✅ Deletion result:', result);
+    return result;
+  } catch (error) {
+    console.error('⚠️ Error deleting:', error.message);
+    return null;
+  }
+};
+
+// 🔍 DEBUG ROUTE - Check database contents
+router.get('/debug/all', async (req, res) => {
+  try {
+    const allRestaurants = await Restaurant.find({})
+      .select('name isActive status cuisine')
+      .lean();
+
+    const stats = {
+      total: allRestaurants.length,
+      active: allRestaurants.filter(r => r.isActive).length,
+      inactive: allRestaurants.filter(r => !r.isActive).length,
+      open: allRestaurants.filter(r => r.status === 'open').length,
+      closed: allRestaurants.filter(r => r.status === 'closed').length,
+    };
+
+    console.log('🔍 Database Stats:', stats);
+    console.log('📋 All restaurants:', allRestaurants.map(r => `${r.name} (Active: ${r.isActive}, Status: ${r.status})`));
+
+    res.json({
+      success: true,
+      stats,
+      restaurants: allRestaurants
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// 🔥 ACTIVATE ALL RESTAURANTS
+router.patch('/activate-all', async (req, res) => {
+  try {
+    console.log('🔄 Activating all restaurants...');
+
+    const result = await Restaurant.updateMany(
+      {},
+      { $set: { isActive: true, status: 'open' } }
+    );
+
+    const restaurants = await Restaurant.find({}, 'name isActive status');
+
+    console.log(`✅ Activated ${result.modifiedCount} restaurants`);
+    console.log('📋 All restaurants:');
+    restaurants.forEach(r => {
+      console.log(`   - ${r.name}: ${r.isActive ? '✅ Active' : '❌ Inactive'} (${r.status})`);
+    });
+
+    res.json({
+      success: true,
+      message: `All ${restaurants.length} restaurants activated!`,
+      data: {
+        updated: result.modifiedCount,
+        total: restaurants.length,
+        restaurants: restaurants.map(r => ({
+          name: r.name,
+          isActive: r.isActive,
+          status: r.status
+        }))
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to activate restaurants',
+      error: error.message
+    });
+  }
+});
+
+// ✅ PUBLIC ROUTE - Get all restaurants
+router.get('/', optionalAuth, async (req, res) => {
+  try {
+    // 🔥 Increased default limit from 10 to 100
+    const { page = 1, limit = 100, search, status, isActive } = req.query;
+    
+    console.log('📋 Fetching restaurants...');
+    console.log('📦 Query params:', { page, limit, search, status, isActive });
     
     const query = {};
     
@@ -61,6 +168,7 @@ router.get('/', authMiddleware, async (req, res) => {
       query.status = status;
     }
     
+    // Only filter by isActive if explicitly provided
     if (isActive !== undefined) {
       query.isActive = isActive === 'true';
     }
@@ -76,10 +184,22 @@ router.get('/', authMiddleware, async (req, res) => {
     const total = await Restaurant.countDocuments(query);
 
     console.log(`✅ Found ${restaurants.length} restaurants (total: ${total})`);
+    console.log('📋 Restaurant names:', restaurants.map(r => r.name));
+
+    const restaurantsWithCacheBuster = restaurants.map(r => {
+      const restaurant = r.toObject();
+      if (restaurant.image) {
+        restaurant.image = `${restaurant.image}?t=${Date.now()}`;
+      }
+      if (restaurant.coverImage) {
+        restaurant.coverImage = `${restaurant.coverImage}?t=${Date.now()}`;
+      }
+      return restaurant;
+    });
 
     res.json({
       success: true,
-      data: restaurants,
+      data: restaurantsWithCacheBuster,
       pagination: {
         currentPage: parseInt(page),
         totalPages: Math.ceil(total / parseInt(limit)),
@@ -98,8 +218,8 @@ router.get('/', authMiddleware, async (req, res) => {
   }
 });
 
-// GET /api/restaurants/:id - Get single restaurant
-router.get('/:id', authMiddleware, async (req, res) => {
+// ✅ PUBLIC ROUTE - Get single restaurant
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const restaurant = await Restaurant.findById(req.params.id)
       .populate('vendor', 'name email');
@@ -111,9 +231,17 @@ router.get('/:id', authMiddleware, async (req, res) => {
       });
     }
 
+    const restaurantObj = restaurant.toObject();
+    if (restaurantObj.image) {
+      restaurantObj.image = `${restaurantObj.image}?t=${Date.now()}`;
+    }
+    if (restaurantObj.coverImage) {
+      restaurantObj.coverImage = `${restaurantObj.coverImage}?t=${Date.now()}`;
+    }
+
     res.json({
       success: true,
-      data: restaurant
+      data: restaurantObj
     });
 
   } catch (error) {
@@ -126,7 +254,7 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/restaurants - Create new restaurant
+// ✅ ADMIN ONLY - Create new restaurant
 router.post('/', authMiddleware, upload.fields([
   { name: 'profileImage', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
@@ -139,8 +267,11 @@ router.post('/', authMiddleware, upload.fields([
       description,
       cuisine,
       vendorEmail,
-      phone,
-      email,
+      vendorName,
+      vendorPhone,
+      vendorPassword,
+      contactPhone,
+      contactEmail,
       street,
       city,
       state,
@@ -151,10 +282,10 @@ router.post('/', authMiddleware, upload.fields([
       minimumOrder
     } = req.body;
 
-    if (!name || !cuisine || !vendorEmail || !phone || !email) {
+    if (!name || !vendorEmail || !vendorName) {
       return res.status(400).json({
         success: false,
-        message: 'Name, cuisine, vendor email, phone, and email are required'
+        message: 'Restaurant name, vendor email, and vendor name are required'
       });
     }
 
@@ -162,14 +293,14 @@ router.post('/', authMiddleware, upload.fields([
     
     if (!vendor) {
       vendor = new User({
-        name: name,
+        name: vendorName || name,
         email: vendorEmail,
-        phone: phone,
-        password: 'TempPassword123!',
+        phone: vendorPhone || '+27000000000',
+        password: vendorPassword || 'vendor123',
         userType: 'vendor'
       });
       await vendor.save();
-      console.log('✅ New vendor created');
+      console.log('✅ New vendor created:', vendorEmail);
     }
 
     let profileImageUrl = null;
@@ -178,37 +309,35 @@ router.post('/', authMiddleware, upload.fields([
     if (req.files) {
       if (req.files['profileImage']) {
         const profileFile = req.files['profileImage'][0];
-        console.log('📤 Uploading profile image to Cloudinary...');
+        console.log('📤 Uploading profile image...');
         const profileResult = await uploadToCloudinary(profileFile.buffer);
         profileImageUrl = profileResult.secure_url;
-        console.log('✅ Profile image uploaded');
       }
 
       if (req.files['coverImage']) {
         const coverFile = req.files['coverImage'][0];
-        console.log('📤 Uploading cover image to Cloudinary...');
+        console.log('📤 Uploading cover image...');
         const coverResult = await uploadToCloudinary(coverFile.buffer);
         coverImageUrl = coverResult.secure_url;
-        console.log('✅ Cover image uploaded');
       }
     }
 
     const restaurant = new Restaurant({
       name,
-      description,
-      cuisine,
+      description: description || '',
+      cuisine: cuisine || 'General',
       vendor: vendor._id,
       image: profileImageUrl,
       coverImage: coverImageUrl,
       contact: {
-        phone,
-        email
+        phone: contactPhone || vendorPhone || '+27000000000',
+        email: contactEmail || vendorEmail
       },
       address: {
-        street,
-        city,
-        state,
-        zipCode,
+        street: street || '',
+        city: city || '',
+        state: state || '',
+        zipCode: zipCode || '',
         coordinates: {
           latitude: parseFloat(latitude) || -26.2041,
           longitude: parseFloat(longitude) || 28.0473
@@ -223,7 +352,7 @@ router.post('/', authMiddleware, upload.fields([
     await restaurant.save();
     await restaurant.populate('vendor', 'name email');
     
-    console.log('✅ Restaurant created:', restaurant.name);
+    console.log('✅ Restaurant created successfully:', restaurant.name);
 
     res.status(201).json({
       success: true,
@@ -241,7 +370,7 @@ router.post('/', authMiddleware, upload.fields([
   }
 });
 
-// PUT /api/restaurants/:id - Update restaurant
+// ✅ ADMIN ONLY - Update restaurant
 router.put('/:id', authMiddleware, upload.fields([
   { name: 'profileImage', maxCount: 1 },
   { name: 'coverImage', maxCount: 1 }
@@ -275,14 +404,15 @@ router.put('/:id', authMiddleware, upload.fields([
       });
     }
 
-    // Update basic fields
+    const oldProfileImage = restaurant.image;
+    const oldCoverImage = restaurant.coverImage;
+
     if (name) restaurant.name = name;
     if (description !== undefined) restaurant.description = description;
     if (cuisine) restaurant.cuisine = cuisine;
     if (deliveryFee !== undefined) restaurant.deliveryFee = parseFloat(deliveryFee);
     if (minimumOrder !== undefined) restaurant.minimumOrder = parseFloat(minimumOrder);
 
-    // Update contact info
     if (phone || email) {
       restaurant.contact = {
         phone: phone || restaurant.contact?.phone || '',
@@ -290,7 +420,6 @@ router.put('/:id', authMiddleware, upload.fields([
       };
     }
 
-    // Update address info
     if (street || city || state || zipCode || latitude || longitude) {
       restaurant.address = {
         street: street || restaurant.address?.street || '',
@@ -304,49 +433,32 @@ router.put('/:id', authMiddleware, upload.fields([
       };
     }
 
-    // Update profile image
     if (req.files && req.files['profileImage']) {
       const profileFile = req.files['profileImage'][0];
-      console.log('📤 Uploading new profile image...');
-      
-      // Delete old image if exists
-      if (restaurant.image) {
-        try {
-          const publicId = restaurant.image.split('/').pop().split('.')[0];
-          await cloudinary.uploader.destroy(`restaurants/${publicId}`);
-          console.log('🗑️ Old profile image deleted');
-        } catch (err) {
-          console.log('⚠️ Could not delete old profile image:', err.message);
-        }
-      }
+      console.log('📤 Uploading NEW profile image...');
       
       const profileResult = await uploadToCloudinary(profileFile.buffer);
       restaurant.image = profileResult.secure_url;
-      console.log('✅ New profile image uploaded');
+      console.log('✅ New profile image uploaded:', restaurant.image);
+      
+      if (oldProfileImage) {
+        await deleteFromCloudinary(oldProfileImage);
+      }
     }
 
-    // Update cover image
     if (req.files && req.files['coverImage']) {
       const coverFile = req.files['coverImage'][0];
-      console.log('📤 Uploading new cover image...');
-      
-      // Delete old image if exists
-      if (restaurant.coverImage) {
-        try {
-          const publicId = restaurant.coverImage.split('/').pop().split('.')[0];
-          await cloudinary.uploader.destroy(`restaurants/${publicId}`);
-          console.log('🗑️ Old cover image deleted');
-        } catch (err) {
-          console.log('⚠️ Could not delete old cover image:', err.message);
-        }
-      }
+      console.log('📤 Uploading NEW cover image...');
       
       const coverResult = await uploadToCloudinary(coverFile.buffer);
       restaurant.coverImage = coverResult.secure_url;
-      console.log('✅ New cover image uploaded');
+      console.log('✅ New cover image uploaded:', restaurant.coverImage);
+      
+      if (oldCoverImage) {
+        await deleteFromCloudinary(oldCoverImage);
+      }
     }
 
-    // Save with validation disabled to avoid schema issues
     await restaurant.save({ validateBeforeSave: false });
     await restaurant.populate('vendor', 'name email');
 
@@ -368,7 +480,7 @@ router.put('/:id', authMiddleware, upload.fields([
   }
 });
 
-// PATCH /api/restaurants/:id/toggle-status - Toggle restaurant active status
+// ✅ ADMIN ONLY - Toggle restaurant active status
 router.patch('/:id/toggle-status', authMiddleware, async (req, res) => {
   try {
     console.log('🔄 Toggling restaurant status:', req.params.id);
@@ -382,10 +494,7 @@ router.patch('/:id/toggle-status', authMiddleware, async (req, res) => {
       });
     }
 
-    // Toggle isActive status
     restaurant.isActive = !restaurant.isActive;
-    
-    // Save with validation disabled to avoid schema conflicts
     await restaurant.save({ validateBeforeSave: false });
 
     console.log(`✅ Restaurant "${restaurant.name}" is now ${restaurant.isActive ? 'ACTIVE' : 'INACTIVE'}`);
@@ -410,7 +519,7 @@ router.patch('/:id/toggle-status', authMiddleware, async (req, res) => {
   }
 });
 
-// DELETE /api/restaurants/:id - Delete restaurant
+// ✅ ADMIN ONLY - Delete restaurant
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
     console.log('🗑️ Deleting restaurant:', req.params.id);
@@ -424,26 +533,11 @@ router.delete('/:id', authMiddleware, async (req, res) => {
       });
     }
 
-    // Delete profile image from Cloudinary
     if (restaurant.image) {
-      try {
-        const publicId = restaurant.image.split('/').pop().split('.')[0];
-        await cloudinary.uploader.destroy(`restaurants/${publicId}`);
-        console.log('🗑️ Profile image deleted from Cloudinary');
-      } catch (err) {
-        console.log('⚠️ Could not delete profile image:', err.message);
-      }
+      await deleteFromCloudinary(restaurant.image);
     }
-
-    // Delete cover image from Cloudinary
     if (restaurant.coverImage) {
-      try {
-        const publicId = restaurant.coverImage.split('/').pop().split('.')[0];
-        await cloudinary.uploader.destroy(`restaurants/${publicId}`);
-        console.log('🗑️ Cover image deleted from Cloudinary');
-      } catch (err) {
-        console.log('⚠️ Could not delete cover image:', err.message);
-      }
+      await deleteFromCloudinary(restaurant.coverImage);
     }
 
     await Restaurant.findByIdAndDelete(req.params.id);

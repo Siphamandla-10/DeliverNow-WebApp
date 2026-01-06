@@ -1,0 +1,122 @@
+{
+  "restaurant": {
+    "name": "Deliver Now Store",
+    "oldId": "68c8682969a704433e2b56f7",
+    "backedUpAt": "2025-11-28T14:45:41.318Z"
+  },
+  "menuItems": [
+    {
+      "name": "Greek Yogurt",
+      "description": "Fresh Greek yogurt",
+      "price": 35.9,
+      "category": "Sides",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "tags": [],
+      "createdAt": "2025-09-15T19:25:31.792Z",
+      "updatedAt": "2025-10-20T16:51:14.897Z"
+    },
+    {
+      "name": "Mozzarella Cheese",
+      "description": "Fresh mozzarella cheese",
+      "price": 59.9,
+      "category": "Sides",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "tags": [],
+      "createdAt": "2025-09-15T19:25:32.571Z",
+      "updatedAt": "2025-10-20T16:51:37.202Z"
+    },
+    {
+      "name": "Oranges",
+      "description": "Fresh oranges",
+      "price": 29.9,
+      "category": "Sides",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "tags": [],
+      "createdAt": "2025-09-15T19:25:34.021Z",
+      "updatedAt": "2025-10-20T16:51:38.608Z"
+    },
+    {
+      "name": "Butter",
+      "description": "Dairy butter",
+      "price": 32.9,
+      "category": "Sides",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "tags": [],
+      "createdAt": "2025-10-20T16:51:27.516Z",
+      "updatedAt": "2025-10-20T16:51:27.516Z"
+    },
+    {
+      "name": "Fresh produce - mixed bag",
+      "description": "N/A",
+      "price": 120,
+      "category": "Specials",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "calories": null,
+      "tags": [],
+      "createdAt": "2025-11-24T09:06:02.364Z",
+      "updatedAt": "2025-11-25T17:42:54.721Z"
+    },
+    {
+      "name": "5kg Fresh meat pack",
+      "description": "N/A",
+      "price": 499,
+      "category": "Specials",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "calories": null,
+      "tags": [],
+      "createdAt": "2025-11-24T09:07:30.010Z",
+      "updatedAt": "2025-11-24T09:09:21.990Z"
+    },
+    {
+      "name": "2 x 18 pack 2 ply tissues",
+      "description": "N/A",
+      "price": 200,
+      "category": "Specials",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "calories": null,
+      "tags": [],
+      "createdAt": "2025-11-24T10:26:16.249Z",
+      "updatedAt": "2025-11-24T10:36:23.514Z"
+    },
+    {
+      "name": "X2 Rice",
+      "description": "Spekko rice",
+      "price": 50,
+      "category": "Specials",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 15,
+      "calories": null,
+      "tags": [],
+      "createdAt": "2025-11-24T17:50:09.198Z",
+      "updatedAt": "2025-11-24T17:50:50.821Z"
+    },
+    {
+      "name": "Meat",
+      "description": "N/A",
+      "price": 150,
+      "category": "Specials",
+      "isAvailable": true,
+      "ingredients": [],
+      "preparationTime": 20,
+      "calories": null,
+      "tags": [],
+      "createdAt": "2025-11-27T07:08:46.961Z",
+      "updatedAt": "2025-11-27T07:08:46.961Z"
+    }
+  ]
+}
